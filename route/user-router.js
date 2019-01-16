@@ -24,17 +24,20 @@ userRouter.post('/api/signup', jsonParser, (req, res, next) => {
   User.findOne({email: req.body.email})
     .then((user) => {
       // NOTE: this is just temporary until I create something to authenticate their email
+      // NOTE: this is interesting, because if they are already authenticated with google, facebook
+      // or twitter, then what will happen when they try to sign up normally, I think I need to add
+      // some sort of catch for if they are already authenticated
       if(user) return Promise.reject(createError(500, 'this email is already being used'));
       else{
         debug('setting up new user');
         let user = new User({
-          googlePermissions: {authenticated: false, login: null},
-          facebookPermissions: {authenticated: false, login: null},
-          twitterPermissions: {authenticated: false, login: null},
+          googlePermissions: {authenticated: false, password: null},
+          facebookPermissions: {authenticated: false, password: null},
+          twitterPermissions: {authenticated: false, password: null},
           email: req.body.email
         });
 
-        user.generatePasswordHash(password)
+        user.generatePasswordHash('normal', password)
           .then((user) => user.generateToken())
           .then((token) => res.send({user: user, token: token}));
       }
@@ -48,7 +51,7 @@ userRouter.get('/api/login', basicAuth, (req, res, next) => {
   User.findOne({email: req.auth.email})
     .then((user) => {
       if(!user) return Promise.reject(createError(401, 'user not found'));
-      return user.comparePasswordHash(req.auth.password);
+      return user.comparePasswordHash('normal', req.auth.password);
     })
     .then((user) => {
       user.generateToken()
@@ -56,7 +59,7 @@ userRouter.get('/api/login', basicAuth, (req, res, next) => {
           let cookieOptions = {maxAge: 900000000};
           res.cookie('portfolio-login-token', token, cookieOptions);
           // NOTE: this needs to be removed for production, changed return to token
-          res.json(token);
+          res.send({user: user, token: token});
         });
     })
     .catch(next);
@@ -91,10 +94,10 @@ userRouter.put('/api/updatepassword/:id', basicAuth, jsonParser, (req, res, next
   User.findById(req.params.id)
     .then((user) => {
       if(!user) return Promise.reject(createError(404, 'not found'));
-      return user.comparePasswordHash(req.auth.password);
+      return user.comparePasswordHash('normal', req.auth.password);
     })
     .then((user) => {
-      user.generatePasswordHash(req.body.password)
+      user.generatePasswordHash('normal', req.body.password)
         .then((user) => user.generateToken())
         .then((token) => {
           res.cookie('portfolio-login-token', token, {maxAge: 900000000});
@@ -112,15 +115,13 @@ userRouter.delete('/api/deleteaccount/:id', basicAuth, (req, res, next) => {
   User.findById(id)
     .then((user) => {
       if(!user) return Promise.reject(createError(404, 'not found'));
-      return user.comparePasswordHash(req.auth.password);
+      return user.comparePasswordHash('normal', req.auth.password);
     })
     .then((user) => {
-      console.log(user.profileId, user.profileId)
       if(user.profileId) Profile.deleteOne({'_id': user.profileId});
       return user;
     })
     .then((user) => {
-      console.log(user);
       Message.deleteMany({authorId: user.id});
     })
     .then(() => {
