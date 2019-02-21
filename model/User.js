@@ -29,6 +29,7 @@ const userSchema = Schema({
     password: String
   },
   email: {type: String, required: true, unique: true},
+  authenticated: {type: Boolean, required: true},
   password: String,
   findHash: {type: String, unique: true}
 });
@@ -37,6 +38,8 @@ userSchema.methods.generatePasswordHash = function(type, password){
   debug(`generatePasswordHash:${type}`);
 
   return new Promise((resolve, reject) => {
+    if(!password) reject(createError(400, 'no password was provided'));
+
     bcrypt.hash(password, 10, (err, hash) => {
       if(err) return reject(err);
       switch(type){
@@ -68,16 +71,18 @@ userSchema.methods.comparePasswordHash = function(type, password){
 
   let user = this;
   return new Promise((resolve, reject) => {
+    if(!password) reject(createError(400, 'no password was provided'));
+
     if(type === 'normal'){
       bcrypt.compare(password, user.password, (err, valid) => {
-        if(err) return reject(err);
-        if(!valid) return reject(createError(401, 'unauthorized'));
+        if(err) reject(err);
+        if(!valid) reject(createError(401, 'unauthorized'));
         resolve(user);
       });
     }else if(type === 'googlePermissions' || 'facebookPermissions' || 'twitterPermissions'){
       bcrypt.compare(password, user[type].password, (err, valid) => {
-        if(err) return reject(err);
-        if(!valid) return reject(createError(401, 'unauthorized'));
+        if(err) reject(err);
+        if(!valid) reject(createError(401, 'unauthorized'));
         resolve(user);
       });
     }else{
@@ -115,12 +120,13 @@ User.handleOauth = function(type, data){
   return new Promise((resolve, reject) => {
     if(!type) reject(createError(400, `need to designate type parameter, ${type} is not valid`));
     if(!data || !data.email || !data.password) reject(createError(400, 'no data given'));
-    return User.findOne({email: data.email})
+
+    return User.findOne({'email': data.email})
       .then((user) => {
         if(user){
           if(user[type].authenticated){
             debug(`GET: /api/auth/${type}`);
-            debug(`${type} user signin:`, data.email);
+            debug(`returning ${type} user signin:`, data.email);
             return user.comparePasswordHash(type, data.password);
           }else{
             debug(`GET: /api/auth/${type}`);
@@ -135,25 +141,20 @@ User.handleOauth = function(type, data){
             googlePermissions: {authenticated: false, password: null},
             facebookPermissions: {authenticated: false, password: null},
             twitterPermissions: {authenticated: false, password: null},
+            authenticated: false,
             email: data.email
           });
           newUser[type].authenticated = true;
           return newUser.generatePasswordHash(type, data.password);
         }
       })
-      .then((user) => {
-        return user.generateToken()
-          .then((token) => {
-            resolve({
-              token: token,
-              user: user
-            });
-          });
-      })
+      .then((user) => user.generateToken())
+      .then((token) => resolve(token))
       .catch((err) => reject(console.error(err)));
   });
 };
 
+// NOTE: seems slightly unnessessary
 User.googleStrategy = function(profile){
   debug('googleStrategy');
 
@@ -161,11 +162,13 @@ User.googleStrategy = function(profile){
   return User.handleOauth('googlePermissions', data);
 };
 
-passport.serializeUser((cookies, done) => done(null, cookies.user));
-// NOTE: something is up with the desteralize user
-passport.deserializeUser((cookies, done) => {
-  console.log('desteralize', cookies)
-  return done(null, cookies.user.user)
+passport.serializeUser((token, done) => {
+  debug(`serializeUser: ${token}`);
+  return done(null, token);
+});
+passport.deserializeUser((token, done) => {
+  debug(`deserializeUser: ${token}`);
+  return done(null, token);
 });
 
 passport.use(new FacebookStrategy({
@@ -178,7 +181,7 @@ function(accessToken, refreshToken, profile, done){
   debug('facebookStrategy');
 
   User.handleOauth('facebookPermissions', {email: profile.emails[0].value, password: profile.id})
-    .then((cookies) => done(null, cookies));
+    .then((token) => done(null, token));
 }
 ));
 
@@ -192,6 +195,6 @@ function(token, tokenSecret, profile, done) {
   debug('twitterStrategy');
 
   User.handleOauth('twitterPermissions', {email: profile.emails[0].value, password: profile.id})
-    .then((cookies) => done(null, cookies));
+    .then((token) => done(null, token));
 }
 ));

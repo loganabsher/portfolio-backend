@@ -16,7 +16,7 @@ const auth = require('./route/auth-router.js');
 const profile = require('./route/profile-router.js');
 const repository = require('./route/repo-router.js');
 const message = require('./route/message-router.js');
-const comment = require('./route/comment-router.js');
+const reddit = require('./route/reddit-router.js');
 
 const app = express();
 const PORT = 8000;
@@ -25,15 +25,17 @@ mongoose.connect(process.env.MONGODB_URI);
 
 app.use(cors({
   origin: process.env.CLIENT_URL,
-  credentials: true,
+  credentials: true
 }));
+
 app.use(morgan('dev'));
 
 app.use(session({
   resave: false,
   saveUninitialized: true,
-  secret: 'the killers are just a solid band aren\'t they?'
+  secret: process.env.APP_SECRET
 }));
+
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -42,6 +44,13 @@ app.use(auth);
 app.use(profile);
 app.use(repository);
 app.use(message);
-app.use(comment);
+app.use(reddit);
+
+// NOTE: this probably needs some sort of authentications from an admin
+app.get('/quit', (req, res) => {
+  console.warn('closing server');
+  res.send('closing server');
+  app.close();
+});
 
 app.listen(PORT, () => debug('running on port: ' + PORT));

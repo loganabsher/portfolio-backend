@@ -3,7 +3,6 @@
 const debug = require('debug')('Backend-Portfolio:auth-router.js');
 
 const Router = require('express').Router;
-const Promise = require('bluebird');
 const superagent = require('superagent');
 const passport = require('passport');
 
@@ -33,9 +32,8 @@ authRouter.get('/oauth/google/code', (req, res) => {
           .set('Authorization', `Bearer ${res.body.access_token}`);
       })
       .then((res) => User.googleStrategy(res.body))
-      .then((data) => {
-        res.cookie('portfolio-login-token', data.token);
-        res.cookie('user', `${data.user._id}`);
+      .then((token) => {
+        res.cookie('portfolio-login-token', token);
         res.redirect(`${process.env.CLIENT_URL}/settings`);
       })
       .catch((error) => {
@@ -50,11 +48,9 @@ authRouter.get('/auth/facebook', passport.authenticate('facebook'));
 authRouter.get('/auth/facebook/callback',
   passport.authenticate('facebook', {failureRedirect: `${process.env.CLIENT_URL}/auth`}),
   function(req, res){
-    console.log(res.req)
-    console.log(res.req.user.user._id)
-    res.cookie('portfolio-login-token', res.req.user.token);
-    // NOTE: this is so fucking stupid but its the only way I've gotten it to work
-    res.cookie('user', `${res.req.user.user._id}`);
+    debug('GET: /auth/facebook/callback');
+
+    res.cookie('portfolio-login-token', res.req.user);
     res.redirect(`${process.env.CLIENT_URL}/settings`);
   });
 
@@ -64,8 +60,8 @@ authRouter.get('/auth/twitter',
 authRouter.get('/auth/twitter/callback',
   passport.authenticate('twitter', {failureRedirect: `${process.env.CLIENT_URL}/auth`}),
   function(req, res) {
-    console.log(res.req)
-    res.cookie('portfolio-login-token', res.req.user.token);
-    res.cookie('user', `${res.req.user.user._id}`);
+    debug('GET: /auth/twitter/callback');
+
+    res.cookie('portfolio-login-token', res.req.user);
     res.redirect(`${process.env.CLIENT_URL}/settings`);
   });
