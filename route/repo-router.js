@@ -2,19 +2,24 @@
 
 const debug = require('debug')('Backend-Portfolio:repo-router.js');
 
-const superagent = require('superagent');
 const Router = require('express').Router;
+const jsonParser = require('body-parser').json();
+const superagent = require('superagent');
+const createError = require('http-errors');
 
 const Repository = require('../model/Repository.js');
 
 const repositoryRouter = module.exports = Router();
 
+
+// NOTE: this should be a route, it needs the body-parser as well
 const loader = function () {
   debug('repoLoader');
   // NOTE: find a way to check the number of repos, replace page=100 with the number of repos
   superagent.get('https://api.github.com/user/repos?per_page=100&type=owner/')
     .set({'Authorization': 'token ' + process.env.GITHUB_TOKEN})
     .end((req, res) => {
+      if(!res || !res.body || res.body.length < 1) return createError(500, 'couldn\'t connect to github api');
       res.body.forEach((ele) => {
         Repository.findOne({name: ele.name})
           .then((repo) => {

@@ -14,6 +14,8 @@ const passport = require('passport');
 const FacebookStrategy = require('passport-facebook');
 const TwitterStrategy = require('passport-twitter');
 
+const Posting = require('./Posting.js');
+
 const userSchema = Schema({
   profileId: String,
   googlePermissions: {
@@ -112,6 +114,23 @@ userSchema.methods.generateToken = function(){
   });
 };
 
+userSchema.methods.handleUserDelete = function(){
+  debug('handleUserDelete');
+
+  let user = this;
+  return new Promise((resolve, reject) => {
+    Posting.find({'authorId': user._id})
+      .then((posts) => {
+        if(!posts) resolve(this);
+        posts.map((ele) => ele.deleteAllChildren());
+      })
+      .then(() => Posting.deleteMany({'authorId': user._id}))
+      .then(() => resolve(user))
+      .catch((err) => reject(err));
+
+  });
+};
+
 const User = module.exports = mongoose.model('users', userSchema);
 
 User.handleOauth = function(type, data){
@@ -153,7 +172,6 @@ User.handleOauth = function(type, data){
   });
 };
 
-// NOTE: seems slightly unnessessary
 User.googleStrategy = function(profile){
   debug('googleStrategy');
 
