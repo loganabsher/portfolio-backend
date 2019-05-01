@@ -4,7 +4,6 @@ const debug = require('debug')('Backend-Portfolio:message-router.js');
 
 const Router = require('express').Router;
 const jsonParser = require('body-parser').json();
-const Promise = require('bluebird');
 const createError = require('http-errors');
 
 const bearerAuth = require('../lib/bearer-auth-middleware.js');
@@ -12,233 +11,120 @@ const Message = require('../model/Message.js');
 
 const messageRouter = module.exports = Router();
 
-messageRouter.post('/api/message', bearerAuth, jsonParser, (req, res) => {
+messageRouter.post('/api/message', bearerAuth, jsonParser, (req, res, next) => {
   debug('POST: /api/message');
 
-  return new Promise((resolve, reject) => {
-    if(!req.body || (!req.body.photos && (!req.body.title && !req.body.text))) return reject(createError(400, 'bad request: missing minimum content requirments'));
-    if(!req.user || !req.user._id) return reject(createError(401, 'unauthorized: json web token failure, your token either doesn\'t exist or is invalid'));
+  if(!req.body || !req.body.title) return next(createError(400, 'bad request: missing minimum content requirments'));
+  if(!req.user || !req.user._id) return next(createError(401, 'unauthorized: json web token failure, your token either doesn\'t exist or is invalid'));
 
-    let message = new Message({
-      // NOTE: this is probably a bad idea to have a user's id within each message
-      authorId: req.user._id,
-      text: req.body.text || null,
-      title: req.body.title || null,
-      // NOTE: probably need some sort of method to handle photo uploads
-    });
-
-    if(req.body.parentId){
-      Message.findById({'_id': req.body.parentId})
-        .then((parent) => {
-          if(!parent || !parent.comments) reject(createError(404, 'not found: this parent node was either invalid or doesn\'t exist:', parent));
-          parent.addComment(message)
-            .then((message) => resolve(res.json(message)));
-        });
-    }else{
-      message.save()
-        .then((message) => resolve(res.json(message)))
-        .catch((err) => reject(err));
-    }
+  let message = new Message({
+    authorId: req.user._id,
+    title: req.body.title,
+    text: req.body.text || null
   });
+
+  message.save()
+    .then((message) => res.json(message))
+    .catch((err) => next(err));
 });
 
-messageRouter.get('/api/message/all', bearerAuth, jsonParser, (req, res) => {
-  debug('GET: /api/message/all');
+// NOTE: I'm thinking of combining all get routes into one big route that handles everything
+// based on certain query parameters that can be handed in
 
-  return new Promise((resolve, reject) => {
-    if(!req.user || !req.user._id) return reject(createError(401, 'unauthorized: json web token failure, your token either doesn\'t exist or is invalid'));
+messageRouter.get('/api/message/fetch', bearerAuth, jsonParser, (req, res, next) => {
+  debug('GET: /api/message/find/:id');
 
-    Message.find({'prev': null})
-      .then((messages) => {
-        if(!messages) return reject(createError(404, 'not found: no messages were found:', messages));
-        resolve(res.json(messages));
-      })
-      .catch((err) => reject(err));
-  });
+  // query parameter:
+  // id: if an id is provided we just try to fetch that message and return it
+  // self: if this is provided we return all items with this user's id
+  // all: if this is provided we return all messages
 });
 
-messageRouter.get('/api/message/self', bearerAuth, jsonParser, (req, res) => {
-  debug('GET: /api/message/self');
-
-  return new Promise((resolve, reject) => {
-    if(!req.user || !req.user._id) return reject(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
-
-    Message.find({'authorId': req.user._id})
-      .then((messages) => {
-        if(!messages) return reject(createError(404, 'not found: no messages were found:', messages));
-        resolve(res.json(messages));
-      })
-      .catch((err) => reject(err));
-  });
-});
-messageRouter.get('/api/message/:id', bearerAuth, jsonParser, (req, res) => {
-  debug('GET: /api/message/:id');
-
-  return new Promise((resolve, reject) => {
-    if(!req.user || !req.user._id) return reject(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
-
-    Message.findById({'_id': req.params.id})
-      .then((message) => {
-        if(!message) return reject(createError(404, 'not found: no message was found:', message));
-        resolve(res.json(message));
-      })
-      .catch((err) => reject(err));
-  });
-});
-
-messageRouter.put('/api/message/edit/:id', bearerAuth, jsonParser, (req, res) => {
-  debug('PUT: /api/message/edit/:id');
-
-  return new Promise((resolve, reject) => {
-    if(!req.body || (!req.body.photos && (!req.body.title && !req.body.text))) return reject(createError(400, 'bad request: missing minimum content requirments'));
-    if(!req.user || !req.user._id) return reject(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
-
-    Message.findById({'_id': req.params.id})
-      .then((message) => {
-        if(!message) return reject(createError(404, 'not found: no message was found:', message));
-        if(req.user._id != message.authorId) return reject(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
-
-        if(req.body.title) message.title = req.body.title;
-        if(req.body.text) message.text = req.body.text;
-        message.updated_at = Date.now();
-        message.save();
-        return message;
-      })
-      .then((message) => resolve(res.json(message)));
-  });
-});
-
-messageRouter.delete('/api/message/remove/:id', bearerAuth, jsonParser, (req, res) => {
-  debug('DELETE: /api/message/remove/:id');
-
-  return new Promise((resolve, reject) => {
-    if(!req.user || !req.user._id) return reject(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
-
-    Message.findById({'_id': req.params.id})
-      .then((message) => {
-        if(!message) return reject(createError(404, 'not found: no message was found:', message));
-        if(req.user._id != message.authorId) return reject(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
-
-        console.log(message)
-
-        if(!message.prev){
-          if(message.comments > 0){
-            message.deleteSelfAndAllComments()
-              .then(() => resolve(res.status(204).send()))
-              .catch((err) => reject(err));
-          }else{
-            message.deleteSelf()
-              .then(() => resolve(res.status(204).send()))
-              .catch((err) => reject(err));
-          }
-        }else{
-          if(message.comments > 0){
-            message.removeComment()
-              .then((message) => resolve(res.json(message)))
-              .catch((err) => reject(err));
-          }else{
-            message.deleteSelf()
-              .then(() => resolve(res.status(204).send()))
-              .catch((err) => reject(err));
-          }
-        }
-      });
-  });
-});
-
+// messageRouter.get('/api/message/find/:id', bearerAuth, jsonParser, (req, res, next) => {
+//   debug('GET: /api/message/find/:id');
 //
-// messageRouter.post('/api/message', bearerAuth, jsonParser, (req, res, next) => {
-//   debug('POST: /api/message');
+//   if(!req.params || !req.params.id) return next(createError(400, 'an _id must be provided, got:', req.params.id));
+//   if(!req.user || !req.user._id) return next(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
 //
-//   if(!req.body || (!req.body.photos && (!req.body.title && !req.body.text))) return next(createError(400, 'missing minimum content requirments'));
-//   if(!req.user || !req.user._id) return next(createError(401, 'json web token failure, unauthorized'));
-//
-//   new Message({
-//     // NOTE: this is probably a bad idea to have a user's id within each message
-//     authorId: req.user._id,
-//     text: req.body.text || null,
-//     title: req.body.title || null,
-//     photos: req.body.photos || [],
-//     comments: []
-//   })
-//     .save()
-//     .then((message) => res.json(message))
-//     .catch(next);
+//   Message.findById({'_id': req.params.id})
+//     .then((posting) => {
+//       if(!posting) return next(createError(404, 'not found: no message was found:', posting));
+//       res.json(posting);
+//     })
+//     .catch((err) => next(err));
 // });
 //
-// messageRouter.get('/api/message/all', bearerAuth, (req, res, next) => {
+// messageRouter.get('/api/message/all', bearerAuth, jsonParser, (req, res, next) => {
 //   debug('GET: /api/message/all');
 //
+//   if(!req.user || !req.user._id) return next(createError(401, 'unauthorized: json web token failure, your token either doesn\'t exist or is invalid'));
+//
 //   Message.find({})
-//     .then((messages) => res.json(messages))
-//     .catch(next);
-// });
-//
-// messageRouter.get('/api/message/self', bearerAuth, (req, res, next) => {
-//   debug('GET: /api/message/self');
-//
-//   if(!req.user || !req.user._id) return next(createError(401, 'json web token failure, unauthorized'));
-//
-//   Message.find({authorId: req.user._id})
-//     .then((messages) => {
-//       if(!messages) res.status(204).send();
-//       res.json(messages);
+//     .then((postings) => {
+//       if(!postings) return next(createError(404, 'not found: no messages were found:', postings));
+//       res.json(postings);
 //     })
-//     .catch(next);
+//     .catch((err) => next(err));
 // });
 //
-// // NOTE: I think this one should stay as it is
-// messageRouter.get('/api/message/:id', bearerAuth, (req, res, next) => {
-//   debug('GET: /api/message/:id');
+// messageRouter.get('/api/posting/self', bearerAuth, jsonParser, (req, res, next) => {
+//   debug('GET: /api/posting/self');
 //
-//   if(!req.params.id) return next(createError(400, 'missing user\'s request id'));
+//   if(!req.user || !req.user._id) return next(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
 //
-//   Message.findById({_id: req.params.id})
-//     .then((message) => res.json(message))
-//     .catch(next);
-// });
-//
-// messageRouter.put('/api/message/edit/:id', bearerAuth, jsonParser, (req, res, next) => {
-//   debug('PUT: /api/message/edit/:id');
-//
-//   if(!req.params || !req.params.id) return next(createError(400, 'missing user\'s request id'));
-//   if(!req.user || !req.user._id) return next(createError(401, 'json web token failure, unauthorized'));
-//
-//   Message.findById({_id: req.params.id})
-//     .then((message) => {
-//       if(message.authorId != req.user._id) return next(createError(401, 'you are not authorized to edit this post'));
-//       if(req.body.text){
-//         message.text = req.body.text;
-//       }
-//       if(req.body.title){
-//         message.title = req.body.title;
-//       }
-//       // NOTE: this is broken
-//       if(req.body.photos){
-//         message.photos = req.body.photos;
-//       }
-//       res.json(message);
+//   Posting.find({'authorId': req.user._id})
+//     .then((postings) => {
+//       if(!postings) return next(createError(404, 'not found: no messages were found:', postings));
+//       res.json(postings);
 //     })
-//     .catch(next);
+//     .catch((err) => next(err));
 // });
-//
-// // NOTE: I think I need to remove all comments associated with each message upon deletion
-// messageRouter.delete('/api/message/remove/:id', bearerAuth, (req, res, next) => {
-//   debug('DELETE: /api/message/remove/:id');
-//
-//   if(!req.params.id) return next(createError(400, 'missing user\'s request id'));
-//   if(!req.user || !req.user._id) return next(createError(401, 'you are not authorized to remove this post'));
-//   Message.findById({_id: req.params.id})
-//     .then((message) => {
-//       if(!message) return next(createError(404, 'no message was found with this id'));
-//       if(message.authorId != req.user._id) return next(createError(401, 'you are not authorized to remove this post'));
-//       if(message.comments.length > 0){
-//         Comment.deleteMany({'messageId': message._id})
-//
-//       }
-//       Message.findByIdAndRemove(req.params.id)
-//         .then(() => res.status(204).send())
-//         .catch(next);
-//     })
-//     .catch(next);
-// });
+
+messageRouter.put('/api/message/edit/:id', bearerAuth, jsonParser, (req, res, next) => {
+  debug('PUT: /api/message/edit/:id');
+
+  if(!req.params || !req.params.id) return next(createError(400, 'an _id must be provided, got:', req.params.id));
+  if(!req.body || (!req.body.photos && (!req.body.title && !req.body.text))) return next(createError(400, 'bad request: missing minimum content requirments'));
+  if(!req.user || !req.user._id) return next(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
+
+  Message.findById({'_id': req.params.id})
+    .then((message) => {
+      if(!message) return next(createError(404, 'not found: no message was found:', message));
+      if(req.user._id != message.authorId) return next(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
+
+      if(req.body.title) message.title = req.body.title;
+      if(req.body.text) message.text = req.body.text;
+      message.updated_at = Date.now();
+      message.save();
+      return message;
+    })
+    .then((message) => res.json(message))
+    .catch((err) => next(err));
+});
+
+messageRouter.delete('/api/message/remove/:id', bearerAuth, jsonParser, (req, res, next) => {
+  debug('DELETE: /api/message/remove/:id');
+
+  if(!req.params || !req.params.id) return next(createError(400, 'an _id must be provided, got:', req.params.id));
+  if(!req.user || !req.user._id) return next(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
+
+  Message.findById({'_id': req.params.id})
+    .then((message) => {
+      if(!message) return next(createError(404, 'not found: no message was found:', message));
+      if(req.user._id != message.authorId) return next(createError(401, 'unauthorized: json web token failure, your token saved in cookies does not match your user id'));
+
+      if(message.next.length > 0){
+        message.handleDelete()
+          .then(() => {
+            Message.deleteOne({'_id': req.params.id})
+              .then(() => res.status(204).send())
+              .catch((err) => next(createError(500, 'failed delete', err)));
+          })
+          .catch((err) => next(createError(500, 'failed delete', err)));
+      }else{
+        Message.deleteOne({'_id': req.params.id})
+          .then(() => res.status(204).send())
+          .catch((err) => next(createError(500, 'failed delete', err)));
+      }
+    });
+});
