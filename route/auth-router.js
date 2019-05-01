@@ -4,7 +4,9 @@ const debug = require('debug')('Backend-Portfolio:auth-router.js');
 
 const Router = require('express').Router;
 const superagent = require('superagent');
-const passport = require('passport');
+const createError = require('http-errors');
+const uuidv1 = require('uuid/v1');
+const uuidv4 = require('uuid/v4');
 
 const User = require('../model/User.js');
 
@@ -43,25 +45,69 @@ authRouter.get('/oauth/google/code', (req, res) => {
   }
 });
 
-authRouter.get('/auth/facebook', passport.authenticate('facebook'));
+authRouter.get('/oauth/facebook/code', (req, res) => {
+  debug('GET: /oauth/facebook/code');
 
-authRouter.get('/auth/facebook/callback',
-  passport.authenticate('facebook', {failureRedirect: `${process.env.CLIENT_URL}/auth`}),
-  function(req, res){
-    debug('GET: /auth/facebook/callback');
+  if(!req.query.code){
+    res.redirect(process.env.CLIENT_URL);
+  }else{
+    return superagent.get('https://graph.facebook.com/v3.2/oauth/access_token')
+      .query({
+        client_id: process.env.FACEBOOK_APP_ID,
+        client_secret: process.env.FACEBOOK_APP_SECRET,
+        redirect_uri: `${process.env.API_URL}/oauth/facebook/code`,
+        code: req.query.code
 
-    res.cookie('portfolio-login-token', res.req.user);
-    res.redirect(`${process.env.CLIENT_URL}/settings`);
-  });
+      })
+      .then((res) => {
+        return superagent.get('https://graph.facebook.com/v3.2/me')
+          .set('Authorization', `Bearer ${res.body.access_token}`)
+          .set('content-type', 'text/javascript; charset=UTF-8')
+          .query({fields: 'id,email'});
+      })
+      .then((res) => {
+        if(res.text){
+          return JSON.parse(res.text)
+        }else{
+          return createError(400, 'bad request: no data was returned from facebook\'s oauth')
+        }
+      })
+      .then((body) => User.facebookStrategy(body))
+      .then((token) => {
+        res.cookie('portfolio-login-token', token);
+        res.redirect(`${process.env.CLIENT_URL}/settings`);
+      });
+  }
+});
 
-authRouter.get('/auth/twitter',
-  passport.authenticate('twitter'));
+authRouter.get('/oauth/twitter/code', (req, res) => {
+  debug('GET: /oauth/twitter/code');
 
-authRouter.get('/auth/twitter/callback',
-  passport.authenticate('twitter', {failureRedirect: `${process.env.CLIENT_URL}/auth`}),
-  function(req, res) {
-    debug('GET: /auth/twitter/callback');
+  console.log(req);
+  // let oauth = new OAuth.OAuth(
+  //   oauth_consumer_key: 'RHZ2wu6ItPCKzxLFngqKNfcpp',
+  //   oauth_nonce: uuidv4(),
+  //   oauth_timestamp: uuidv1()
+  // );
+  const authHeader = {
+    oauth_callback: 'http://localhost:8000/oauth/twitter/code',
+    oauth_consumer_key: process.env.TWITTER_APP_ID,
+    oauth_consumer_secret: process.env.TWITTER_APP_SECRET
+  };
 
-    res.cookie('portfolio-login-token', res.req.user);
-    res.redirect(`${process.env.CLIENT_URL}/settings`);
-  });
+  superagent.post('https://api.twitter.com/oauth/request_token')
+    .set({'Authorization': `OAuth oauth_consumer_key="${process.env.TWITTER_APP_ID}",
+oauth_consumer_secret="${process.env.TWITTER_APP_SECRET}",
+oauth_nonce="${uuidv4()}",
+oauth_callback="http://localhost:8000/oauth/twitter/code"`
+    })
+    .then((res) => {
+      console.log(res)
+    })
+
+  if(!req.query.code){
+    res.redirect(process.env.CLIENT_URL);
+  }else{
+    console.log(req)
+  }
+});
